@@ -119,6 +119,31 @@ runtime/venv/bin/python tts_f5.py --out test.wav --text "Проверка свя
 curl http://127.0.0.1:8766/reload
 ```
 
+## Стиль ответов «Геральт» (опционально)
+
+`docs/geralt-style.md` — промпт стиля: лексика, обороты, ритм. Живёт отдельно
+от плагина голоса, включается в конфиге OpenCode.
+
+```powershell
+# Windows
+Copy-Item docs\geralt-style.md "$env:USERPROFILE\.config\opencode\geralt-style.md"
+```
+
+```bash
+# Linux / macOS
+cp docs/geralt-style.md ~/.config/opencode/geralt-style.md
+```
+
+Затем в `~/.config/opencode/opencode.json`:
+
+```json
+"instructions": [
+  "~/.config/opencode/geralt-style.md"
+]
+```
+
+Отключить — убрать ключ `instructions` (файл можно оставить).
+
 ## Как это работает
 
 1. `normalize_numbers()` — числа, годы, диапазоны, единицы (`16 ГБ`), валюты,

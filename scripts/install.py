@@ -24,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 VENV = ROOT / "runtime" / "venv"
 TORCH_VERSION = "2.6.0"
+DRY_RUN = False
 
 
 def venv_python() -> Path:
@@ -35,6 +36,8 @@ def venv_python() -> Path:
 def run(cmd: list[object]) -> None:
     printable = " ".join(str(part) for part in cmd)
     print(f"\n$ {printable}", flush=True)
+    if DRY_RUN:
+        return
     subprocess.check_call([str(part) for part in cmd])
 
 
@@ -97,7 +100,23 @@ def main() -> int:
     parser.add_argument("--cpu", action="store_true", help="install CPU-only torch")
     parser.add_argument("--skip-model", action="store_true")
     parser.add_argument("--skip-torch", action="store_true")
+    parser.add_argument("--dry-run", action="store_true", help="print the plan without installing anything")
     args = parser.parse_args()
+
+    global DRY_RUN
+    DRY_RUN = args.dry_run
+
+    try:
+        version = subprocess.check_output(
+            [args.python, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        version = ""
+    if version:
+        major, minor = (int(part) for part in version.split("."))
+        if (major, minor) < (3, 10) or (major, minor) > (3, 13):
+            print(f"warning: Python {version} found; 3.10–3.12 is the safe range")
 
     py = venv_python()
     if not py.exists():

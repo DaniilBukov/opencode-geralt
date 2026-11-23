@@ -14,9 +14,8 @@ __pycache__/
 *.pyo
 .pytest_cache/
 
-# Audio: only the reference clip is part of the repo
+# Audio: the reference clip is NOT in the repo (game audio, personal use only)
 *.wav
-!assets/ref/*.wav
 *.mp3
 *.ogg
 

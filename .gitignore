@@ -1,0 +1,27 @@
+# Portable runtime created by scripts/install.py
+runtime/
+.venv/
+
+# Model weights are downloaded, not committed (1.3 GB, CC BY-NC 4.0)
+models/
+
+# Legacy experiments (GPT-SoVITS, so-vits-svc, XTTS, Piper, Witcher corpus)
+engines/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Audio: only the reference clip is part of the repo
+*.wav
+!assets/ref/*.wav
+*.mp3
+*.ogg
+
+# Logs and local junk
+*.log
+plugin.log
+Thumbs.db
+.DS_Store

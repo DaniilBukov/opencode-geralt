@@ -1,0 +1,9 @@
+# Python deps for the F5-TTS Russian voice worker.
+# torch/torchaudio are installed by scripts/install.py (the wheel index differs per OS/GPU).
+f5-tts==1.1.22
+ruaccent==1.5.8.3
+num2words==0.5.14
+pymorphy3==2.0.6
+soundfile==0.14.0
+numpy==2.5.5
+librosa==1.0.1

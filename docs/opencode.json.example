@@ -1,0 +1,34 @@
+{
+  "plugins": [
+    {
+      "package": "./voice-tts",
+      "options": {
+        "enabled": true,
+        "command": [
+          "<REPO>/runtime/venv/bin/python",
+          "<REPO>/tts_f5.py",
+          "--out",
+          "{out}",
+          "--textfile",
+          "{textfile}",
+          "--speed",
+          "1.0",
+          "--nfe",
+          "32"
+        ],
+        "format": "wav",
+        "cwd": "<REPO>",
+        "lang": "ru",
+        "voice": "",
+        "rate": 0,
+        "maxChars": 1500,
+        "maxTotalChars": 6000,
+        "events": ["answer", "permission", "question", "error"],
+        "mainSessionOnly": true,
+        "debug": true,
+        "timeoutMs": 300000,
+        "playTimeoutMs": 300000
+      }
+    }
+  ]
+}

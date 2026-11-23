@@ -1,0 +1,5 @@
+* text=auto
+*.wav binary
+*.safetensors binary
+*.pt binary
+*.onnx binary

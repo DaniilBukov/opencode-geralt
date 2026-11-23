@@ -81,6 +81,7 @@ type RunResult = {
 
 let current: ChildProcess | null = null
 let speechToken = 0
+const activeChildren = new Set<ChildProcess>()
 
 function numberOption(value: unknown, fallback: number, min: number, max: number) {
   const parsed = typeof value === "number" ? value : Number(value)
@@ -122,9 +123,9 @@ function killTree(child: ChildProcess | null) {
 }
 
 function stopCurrent() {
-  const child = current
   current = null
-  killTree(child)
+  for (const child of activeChildren) killTree(child)
+  activeChildren.clear()
 }
 
 function playbackAttempts(file: string): Array<[string, string[]]> {
@@ -196,6 +197,7 @@ function run(
     }
 
     current = child
+    activeChildren.add(child)
     const stdout: Buffer[] = []
     let stderr = ""
     let settled = false
@@ -204,6 +206,7 @@ function run(
       if (settled) return
       settled = true
       clearTimeout(timer)
+      activeChildren.delete(child)
       if (current === child) current = null
       if (error) reject(error)
       else resolve(result!)
@@ -537,13 +540,21 @@ export default Plugin.define({
       if (child) killTree(child)
     }
 
-    async function speakChunk(chunk: string, token: number) {
+    type Rendered = { file: string; cleanup: () => Promise<void> }
+
+    async function renderChunk(chunk: string, token: number): Promise<Rendered | null> {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       await mkdir(TEMP_DIR, { recursive: true })
       const textFile = path.join(TEMP_DIR, `${id}.txt`)
       const outFile = path.join(TEMP_DIR, `${id}.${format}`)
       let svcFile: string | null = null
       await writeFile(textFile, chunk, "utf8")
+
+      const cleanup = async () => {
+        await rm(textFile, { force: true }).catch(() => {})
+        if (!keepAudio) await rm(outFile, { force: true }).catch(() => {})
+        if (!keepAudio && svcFile) await rm(svcFile, { force: true }).catch(() => {})
+      }
 
       try {
         if (command.length > 0) {
@@ -559,7 +570,10 @@ export default Plugin.define({
             timeoutMs,
             captureStdout: outputMode === "stdout",
           })
-          if (token !== speechToken) return
+          if (token !== speechToken) {
+            await cleanup()
+            return null
+          }
           if (result.code !== 0) {
             throw new Error(`engine exited with code ${result.code}: ${result.stderr || "(no stderr)"}`)
           }
@@ -585,13 +599,19 @@ export default Plugin.define({
           ]
           if (voice) sapiArgs.push("-Voice", voice)
           const result = await run(POWERSHELL, sapiArgs, { cwd, timeoutMs })
-          if (token !== speechToken) return
+          if (token !== speechToken) {
+            await cleanup()
+            return null
+          }
           if (result.code !== 0) {
             throw new Error(`SAPI exited with code ${result.code}: ${result.stderr || "(no stderr)"}`)
           }
         }
 
-        if (token !== speechToken) return
+        if (token !== speechToken) {
+          await cleanup()
+          return null
+        }
         if (!existsSync(outFile)) throw new Error(`engine did not create ${outFile}`)
         const info = await stat(outFile)
         if (!info.size) throw new Error(`engine created an empty file ${outFile}`)
@@ -602,7 +622,10 @@ export default Plugin.define({
           const started = Date.now()
           try {
             const converted = await convertSvc(outFile, svcFile, token)
-            if (token !== speechToken) return
+            if (token !== speechToken) {
+              await cleanup()
+              return null
+            }
             if (converted && existsSync(svcFile) && (await stat(svcFile)).size > 0) {
               playFile = svcFile
               log(opts, `SVC converted in ${Date.now() - started} ms`)
@@ -612,34 +635,80 @@ export default Plugin.define({
           }
         }
 
-        if (token !== speechToken) return
-        const played = await playAudio(playFile, cwd, playTimeoutMs)
-        if (token !== speechToken) return
-        if (played.code !== 0) {
-          throw new Error(`playback exited with code ${played.code}: ${played.stderr || "(no stderr)"}`)
+        if (token !== speechToken) {
+          await cleanup()
+          return null
         }
-      } finally {
-        await rm(textFile, { force: true }).catch(() => {})
-        if (!keepAudio) await rm(outFile, { force: true }).catch(() => {})
-        if (!keepAudio && svcFile) await rm(svcFile, { force: true }).catch(() => {})
+        return { file: playFile, cleanup }
+      } catch (error) {
+        await cleanup()
+        throw error
       }
     }
 
-    async function speak(text: string, kind: string) {
+    async function playChunk(file: string, token: number) {
+      if (token !== speechToken) return
+      const played = await playAudio(file, cwd, playTimeoutMs)
+      if (token !== speechToken) return
+      if (played.code !== 0) {
+        throw new Error(`playback exited with code ${played.code}: ${played.stderr || "(no stderr)"}`)
+      }
+    }
+
+    async function speakWithToken(text: string, kind: string, token: number) {
       const cleaned = cleanText(text, maxTotalChars)
       if (!cleaned) return
-      const token = ++speechToken
-      stopCurrent()
       log(opts, `speaking ${kind}, ${cleaned.length} chars`)
       const chunks = splitText(prefix + cleaned, maxChars)
-      for (const chunk of chunks) {
-        if (token !== speechToken) return
-        await speakChunk(chunk, token)
+      if (chunks.length === 0) return
+
+      // Synthesize the next chunk while the current one is playing.
+      const start = (index: number): Promise<Rendered | null> =>
+        index < chunks.length
+          ? renderChunk(chunks[index], token).catch((error) => {
+              log(opts, "render failed:", error)
+              return null
+            })
+          : Promise.resolve(null)
+
+      let pending = start(0)
+      for (let index = 0; index < chunks.length; index++) {
+        const rendered = await pending
+        if (token !== speechToken) {
+          if (rendered) await rendered.cleanup()
+          return
+        }
+        if (!rendered) return
+        pending = start(index + 1)
+        try {
+          await playChunk(rendered.file, token)
+        } finally {
+          await rendered.cleanup()
+        }
+        if (token !== speechToken) {
+          void pending.then((extra) => extra?.cleanup())
+          return
+        }
       }
     }
 
+    let speechChain: Promise<void> = Promise.resolve()
+
     function say(text: string, kind: string) {
-      void speak(text, kind).catch((error) => log(opts, `${kind} failed:`, error))
+      const token = ++speechToken
+      stopCurrent()
+      speechChain = speechChain
+        .then(() => (token === speechToken ? speakWithToken(text, kind, token) : undefined))
+        .catch((error) => log(opts, `${kind} failed:`, error))
+    }
+
+    if (command.length > 1 && command.some((arg) => arg.endsWith("tts_f5.py"))) {
+      void run(command[0], [command[1], "--warm"], { cwd, timeoutMs: Math.max(timeoutMs, 240_000) })
+        .then((result) => {
+          if (result.code === 0) log(opts, "worker prewarmed")
+          else log(opts, `prewarm failed (code ${result.code}): ${result.stderr}`)
+        })
+        .catch((error) => log(opts, "prewarm failed:", error))
     }
 
     async function claim(key: string) {

@@ -80,11 +80,12 @@ def ensure_server() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", required=True)
+    parser.add_argument("--out", default="")
     parser.add_argument("--textfile", default="")
     parser.add_argument("--text", default="")
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--nfe", type=int, default=32)
+    parser.add_argument("--warm", action="store_true", help="only start the worker and exit")
     parser.add_argument("--lang", default="ru")
     parser.add_argument("--rate", default="0")
     parser.add_argument("--voice", default="")
@@ -94,6 +95,15 @@ def main() -> int:
     parser.add_argument("--no-fallback", action="store_true")
     parser.add_argument("--fallback-only", action="store_true")
     args, _unknown = parser.parse_known_args()
+
+    if args.warm:
+        ensure_server()
+        print("[tts-f5] worker ready", file=sys.stderr)
+        return 0
+
+    if not args.out:
+        print("[tts-f5] --out is required", file=sys.stderr)
+        return 1
 
     text = args.text
     if not text and args.textfile:

@@ -708,6 +708,16 @@ class Handler(BaseHTTPRequestHandler):
             global _pronounce
             _pronounce = load_pronounce()
             self._send(200, b"reloaded", "text/plain")
+        elif self.path == "/shutdown":
+            self._send(200, b"bye", "text/plain")
+            import threading
+            import time as _time
+
+            def _exit() -> None:
+                _time.sleep(0.2)
+                os._exit(0)
+
+            threading.Thread(target=_exit, daemon=True).start()
         else:
             self._send(404, b"not found", "text/plain")
 

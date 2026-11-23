@@ -55,6 +55,8 @@ def start_server() -> None:
         PYTHONUTF8="1",
         PYTHONIOENCODING="utf-8",
         F5_PORT=str(PORT),
+        # Weights are local; skip HuggingFace metadata calls on every start.
+        HF_HUB_OFFLINE="1",
     )
     subprocess.Popen(
         [str(PYTHON), str(SERVER)],
@@ -70,12 +72,12 @@ def ensure_server() -> None:
     if healthy():
         return
     start_server()
-    deadline = time.time() + 120
+    deadline = time.time() + 300
     while time.time() < deadline:
         if healthy():
             return
         time.sleep(0.5)
-    raise RuntimeError("f5 server did not start in 120 s")
+    raise RuntimeError("f5 server did not start in 300 s")
 
 
 def main() -> int:
@@ -86,6 +88,7 @@ def main() -> int:
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--nfe", type=int, default=32)
     parser.add_argument("--warm", action="store_true", help="only start the worker and exit")
+    parser.add_argument("--stop", action="store_true", help="stop the worker and free its memory")
     parser.add_argument("--lang", default="ru")
     parser.add_argument("--rate", default="0")
     parser.add_argument("--voice", default="")
@@ -95,6 +98,15 @@ def main() -> int:
     parser.add_argument("--no-fallback", action="store_true")
     parser.add_argument("--fallback-only", action="store_true")
     args, _unknown = parser.parse_known_args()
+
+    if args.stop:
+        try:
+            with urllib.request.urlopen(f"{URL}/shutdown", timeout=5) as response:
+                ok = response.status == 200
+        except Exception:  # noqa: BLE001
+            ok = False
+        print("[tts-f5] stopped" if ok else "[tts-f5] worker is not running", file=sys.stderr)
+        return 0
 
     if args.warm:
         ensure_server()

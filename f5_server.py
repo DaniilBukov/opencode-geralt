@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -49,6 +51,29 @@ DEVICE = os.environ.get("F5_DEVICE", "").strip()
 PORT = int(os.environ.get("F5_PORT", "8766"))
 SPEED = float(os.environ.get("F5_SPEED", "1.0"))
 NFE = int(os.environ.get("F5_NFE", "32"))
+# Unload the worker after this many seconds without requests (0 disables).
+IDLE_TIMEOUT = int(os.environ.get("F5_IDLE_TIMEOUT", "1800"))
+
+_activity_lock = threading.Lock()
+_active_requests = 0
+_last_activity = time.monotonic()
+
+
+def touch() -> None:
+    global _last_activity
+    _last_activity = time.monotonic()
+
+
+def watchdog() -> None:
+    interval = max(1, min(30, IDLE_TIMEOUT))
+    while True:
+        time.sleep(interval)
+        with _activity_lock:
+            idle = time.monotonic() - _last_activity
+            busy = _active_requests > 0
+        if not busy and idle >= IDLE_TIMEOUT:
+            print(f"[f5] idle {int(idle)} s, unloading", file=sys.stderr, flush=True)
+            os._exit(0)
 
 
 def resolve_device() -> str:
@@ -702,6 +727,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
+        touch()
         if self.path == "/health":
             self._send(200, b"ok", "text/plain")
         elif self.path == "/reload":
@@ -722,9 +748,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def do_POST(self) -> None:  # noqa: N802
+        global _active_requests
         if self.path != "/tts":
             self._send(404, b"not found", "text/plain")
             return
+        with _activity_lock:
+            _active_requests += 1
+            _last_activity = time.monotonic()
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -739,12 +769,19 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:  # noqa: BLE001
             traceback.print_exc(file=sys.stderr)
             self._send(500, f"{type(error).__name__}: {error}".encode("utf-8"), "text/plain")
+        finally:
+            with _activity_lock:
+                _active_requests -= 1
+                _last_activity = time.monotonic()
 
 
 def main() -> None:
     load_model()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"[f5] listening on {PORT}", file=sys.stderr, flush=True)
+    if IDLE_TIMEOUT > 0:
+        threading.Thread(target=watchdog, daemon=True).start()
+        print(f"[f5] idle unload after {IDLE_TIMEOUT} s", file=sys.stderr, flush=True)
     server.serve_forever()
 
 

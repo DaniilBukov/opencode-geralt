@@ -17,6 +17,9 @@ FILES = {
     "F5TTS_v1_Base_v2/model_last_inference.safetensors": "model_last_inference.safetensors",
     "F5TTS_v1_Base/vocab.txt": "vocab.txt",
 }
+# The vocoder is fetched by f5-tts on the first synthesis; pre-cache it so the
+# worker can start with HF_HUB_OFFLINE=1.
+AUX_REPOS = ("charactr/vocos-mel-24khz",)
 
 
 def main() -> int:
@@ -26,7 +29,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        from huggingface_hub import hf_hub_download
+        from huggingface_hub import hf_hub_download, snapshot_download
     except ImportError:
         print("huggingface_hub is missing: pip install huggingface_hub")
         return 1
@@ -43,6 +46,10 @@ def main() -> int:
         cached = hf_hub_download(repo_id=REPO_ID, filename=remote)
         shutil.copyfile(cached, target)
         print(f"saved: {target}")
+
+    for repo in AUX_REPOS:
+        print(f"caching {repo} ...")
+        snapshot_download(repo_id=repo)
 
     print(f"model directory ready: {dest}")
     return 0
